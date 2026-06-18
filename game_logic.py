@@ -16,10 +16,9 @@ from heroes.mao import Mao
 from heroes.reuben import Reuben
 from heroes.langou import Langou
 from heroes.liuba import LiuBa
-from heroes.boundary import boundary
 
-AVAILABLE_CLASSES = [LaoZheng, BiaoYuGe, JokerRicky, Mao, Reuben, Langou, LiuBa, boundary]
-HERO_NAME_MAP = {"BiaoYuGe": "鱼哥", "LaoZheng": "牢正", "JokerRicky": "曼波舞王", "Mao": "猫", "Reuben": "肉本", "Langou": "蓝狗", "LiuBa": "68", "boundary": "boundary"}
+AVAILABLE_CLASSES = [LaoZheng, BiaoYuGe, JokerRicky, Mao, Reuben, Langou, LiuBa]
+HERO_NAME_MAP = {"BiaoYuGe": "鱼哥", "LaoZheng": "牢正", "JokerRicky": "曼波舞王", "Mao": "猫", "Reuben": "肉本", "Langou": "蓝狗", "LiuBa": "68"}
 
 
 def start_new_round(app, force_left_cls=None, force_right_cls=None):
