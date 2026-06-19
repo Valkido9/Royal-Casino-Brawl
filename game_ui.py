@@ -493,7 +493,7 @@ def render_game_over(app):
         r_txt = app.font_large.render(rank_str, True, color)
         app.logical_surface.blit(r_txt, (WIDTH // 2 - r_txt.get_width() // 2, 200 + idx * 60))
 
-    version_surf = app.font_small.render("v0.4.0", True, (150, 150, 150))
+    version_surf = app.font_small.render("v0.4.2", True, (150, 150, 150))
     author_surf = app.font_small.render("Author: ValkyDoge & Gemini", True, (150, 150, 150))
     app.logical_surface.blit(version_surf, (WIDTH - version_surf.get_width() - 20, HEIGHT - 70))
     app.logical_surface.blit(author_surf, (WIDTH - author_surf.get_width() - 20, HEIGHT - 40))

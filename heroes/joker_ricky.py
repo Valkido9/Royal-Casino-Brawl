@@ -2,7 +2,7 @@ import pygame
 import math
 import random
 import os
-import sys  # <--- 新增导入 sys
+import sys
 
 from settings import WIDTH, HEIGHT
 from core_classes import Agent, Bullet
@@ -97,11 +97,17 @@ class ExplosionParticle:
 
 
 class JokerBullet(Bullet):
-    def __init__(self, x, y, vx, vy, owner_faction, damage, image, infinite_bounce=False, life=None):
+    def __init__(self, x, y, vx, vy, owner_faction, damage, image, infinite_wall_bounce=False, life=None):
         super().__init__(x, y, vx, vy, owner_faction, damage, image)
         self.radius = 30
         self.bounce_count = 0
-        self.infinite_bounce = infinite_bounce
+
+        # --- 核心修复：分离“无限撞墙”和“穿透敌人”的判定 ---
+        # 允许墙壁无限反弹
+        self.infinite_wall_bounce = infinite_wall_bounce
+        # 强制设置为主引擎的非穿透子弹，保证碰到敌人一次立刻销毁，防止恐怖的帧伤！
+        self.infinite_bounce = False
+
         self.life = life
 
     def move(self):
@@ -125,8 +131,8 @@ class JokerBullet(Bullet):
             self.y = max(self.radius, min(HEIGHT - self.radius, self.y))
             bounced = True
 
-        # 如果不是无限反弹，则计算反弹次数（反弹3次，第4次碰到墙壁销毁）
-        if bounced and not self.infinite_bounce:
+        # 利用专用的墙壁反弹参数进行判定
+        if bounced and not self.infinite_wall_bounce:
             self.bounce_count += 1
             if self.bounce_count > 3:
                 self.active = False
@@ -264,7 +270,7 @@ class JokerRicky(Agent):
             final_vx, final_vy,
             self.faction, self.atk,
             BULLET_IMG,
-            infinite_bounce=infinite,
+            infinite_wall_bounce=infinite,
             life=life
         )
         bullet_list.append(new_bullet)
@@ -275,6 +281,7 @@ class JokerRicky(Agent):
         if self.state == "TIME_STOP":
             for p in self.particles:
                 p.draw(surface)
+
 
 # ==========================================
 # 4. 图鉴数据注册
@@ -289,7 +296,7 @@ joker_stats = {
     "单发伤害": "32",
     "基础移速": "6",
     "弹道速度": "12",
-    "反弹次数": "3次 (常态) / 无限 (大招)",
+    "反弹特性": "弹壁3次 (常态) / 无限撞墙反弹 (大招)",
     "大招充能": "极慢 (约83秒)"
 }
 
@@ -297,7 +304,7 @@ joker_mechanics = (
     "【普攻·三连点射】\n"
     "每5秒进行一轮三连发点射，每发间隔1.2秒。射出的子弹可以在墙壁间弹射3次，第4次触墙才会销毁。\n\n"
     "【终极技能·曼波暴走！】\n"
-    "移速狂飙至原本的5倍，并以极快的频率向全场倾泻21发“无限反弹”的暴走弹幕。暴走结束后，他会进入长达5秒的「虚弱期」，期间移速恢复正常且完全无法攻击。这批弹幕会一直在场上弹射直到他的虚弱期结束。\n\n"
+    "移速狂飙至原本的5倍，并以极快的频率向全场倾泻21发“无限撞墙反弹”的暴走弹幕（触碰敌人造成一次高额爆发伤害后即刻销毁）。暴走结束后，他会进入长达5秒的「虚弱期」，期间移速恢复正常且完全无法攻击。\n\n"
 )
 
 # 注册进入图鉴系统

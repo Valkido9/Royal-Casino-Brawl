@@ -18,7 +18,8 @@ from heroes.langou import Langou
 from heroes.liuba import LiuBa
 
 AVAILABLE_CLASSES = [LaoZheng, BiaoYuGe, JokerRicky, Mao, Reuben, Langou, LiuBa]
-HERO_NAME_MAP = {"BiaoYuGe": "鱼哥", "LaoZheng": "牢正", "JokerRicky": "曼波舞王", "Mao": "猫", "Reuben": "肉本", "Langou": "蓝狗", "LiuBa": "68"}
+HERO_NAME_MAP = {"BiaoYuGe": "鱼哥", "LaoZheng": "牢正", "JokerRicky": "曼波舞王", "Mao": "猫", "Reuben": "肉本",
+                 "Langou": "蓝狗", "LiuBa": "68"}
 
 
 def start_new_round(app, force_left_cls=None, force_right_cls=None):
@@ -183,7 +184,9 @@ def update_fighting_logic(app):
 
                 for c in alive_challengers:
                     c.hp = min(c.max_hp, c.hp + c.max_hp * 0.20 * deaths)
-                    c.ult_charge = min(100, getattr(c, 'ult_charge', 0) + 20 * deaths)
+                    charge_rate = getattr(c, 'ult_charge_rate', 1.0)
+                    max_charge = getattr(c, 'max_ult_charge', 100)
+                    c.ult_charge = min(max_charge, getattr(c, 'ult_charge', 0) + 20 * deaths * charge_rate)
 
             if len(alive_challengers) == 1 and not getattr(app, 'hunter_triggered', False) and boss and boss.hp > 0:
                 is_boss_healthy = False
@@ -241,6 +244,12 @@ def update_fighting_logic(app):
             time_past_30s = app.elapsed_fight - 30000
             app.safe_zone_radius = max(150, int(1100 - (time_past_30s / 1000) * 23.75))
 
+        hp_at_start = {a: a.hp for a in app.agents}
+
+        # 清除上一帧的“禁止充能”标记
+        for agent in app.agents:
+            agent.prevent_charge_this_frame = False
+
         for agent in app.agents:
             if agent.hp <= 0: continue
             if app.is_time_stopped and agent != app.time_stop_owner: continue
@@ -274,7 +283,6 @@ def update_fighting_logic(app):
                             if agent.faction == "Faction_B":
                                 a.hp -= (diff * 2.0)
                             elif getattr(agent, 'is_hunter', False):
-                                # --- 核心修改：近战/特殊攻击的终极猎手补偿提升为总计 2.0 倍 (即多扣1.0倍) ---
                                 a.hp -= (diff * 1.0)
 
                 new_bullet_count = len(app.bullets) - old_bullet_count
@@ -304,15 +312,25 @@ def update_fighting_logic(app):
                                 if bullet.owner_faction == "Faction_B":
                                     current_dmg_mult = 3.0
                                 elif bullet.owner_faction == "Faction_A" and getattr(app, 'hunter_triggered', False):
-                                    # --- 核心修改：弹幕/波纹的终极猎手补偿直接放大为 2.0 倍 ---
                                     current_dmg_mult = 2.0
 
                             agent.hp -= (bullet.damage * current_dmg_mult)
-
                             if not getattr(bullet, 'infinite_bounce', False): bullet.active = False
-                            agent.ult_charge = min(100, agent.ult_charge + 8)
                             break
             resolve_combat(app.agents)
+
+        # ---------------- 核心修改：受击补偿充能结算 ----------------
+        for agent in app.agents:
+            # 如果这帧被紫龙打了贴上了标签，就不补偿充能
+            if getattr(agent, 'prevent_charge_this_frame', False):
+                continue
+
+            if agent in hp_at_start and agent.hp > 0 and hp_at_start[agent] > agent.hp:
+                damage_taken = hp_at_start[agent] - agent.hp
+                charge_rate = getattr(agent, 'ult_charge_rate', 1.0)
+                max_charge = getattr(agent, 'max_ult_charge', 100)
+                charge_gained = damage_taken * 0.3 * charge_rate
+                agent.ult_charge = min(max_charge, getattr(agent, 'ult_charge', 0) + charge_gained)
 
         app.bullets = [b for b in app.bullets if b.active]
 

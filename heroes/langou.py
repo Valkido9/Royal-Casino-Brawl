@@ -25,15 +25,14 @@ def load_img(filename, size):
         raw_img = pygame.image.load(img_path)
         return pygame.transform.smoothscale(raw_img, size)
     except Exception as e:
-        print(f"Langou error loading img: {filename}, error: {e}")
+        print(f"Langou 加载图片失败: {filename}，错误: {e}")
         return None
 
 
 ICON_LANGOU = load_img("icon-langou.jpg", (120, 120)) or load_img("icon-langou.png", (120, 120))
 ICON_ZILONG = load_img("icon-zilong.jpg", (80, 80)) or load_img("icon-zilong.png", (80, 80))
 IMG_BOOK = load_img("book.png", (250, 250))
-# --- 核心修改：将爪击贴图长宽放大至 200% ---
-IMG_CLAW = load_img("claw.png", (240, 240))
+IMG_CLAW = load_img("claw.png", (120, 120))
 
 
 def load_snd(filename):
@@ -41,7 +40,6 @@ def load_snd(filename):
         return pygame.mixer.Sound(os.path.join(SOUND_DIR, filename))
     except:
         return None
-
 
 ULT_SND = load_snd("ultimate.mp3")
 ATTACK_SND = load_snd("attack.mp3")
@@ -74,6 +72,7 @@ class ArtbookTrap:
         self.radius = 45
         self.active = True
         self.is_artbook = True
+
         self.rotation = 0
 
     def move(self):
@@ -210,6 +209,9 @@ class Zilong(Agent):
                                         self.faction, owner_agent=self)
                 bullet_list.append(claw)
 
+                # ---------------- 核心修复：执行抽能前，打上禁止受伤充能标签 ----------------
+                target.prevent_charge_this_frame = True
+
                 target.hp -= collision_dmg
                 target.hp -= claw_dmg
 
@@ -317,7 +319,7 @@ class Langou(Agent):
         else:
             self.state = "TIME_STOP"
             self.ult_charge = 0
-            self.ult_timer = int(2.0 * FPS)
+            self.ult_timer = int(1.0 * FPS)
             self.vx, self.vy = 0, 0
             if ULT_SND: ULT_SND.play()
             return
@@ -378,7 +380,6 @@ langou_lore = (
     "“咱决定在下个版本往时空里加超形上学的设定，不知道狗男会不会同意”\n\n"
 )
 
-# 注册进入图鉴系统
 register_almanac_entry(
     char_id="Langou",
     name="蓝狗",

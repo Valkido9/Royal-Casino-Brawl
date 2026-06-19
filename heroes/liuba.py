@@ -41,6 +41,7 @@ IMG_ATTACK = load_img("attack.png", (300, 300))
 IMG_HAND = load_img("hand.png", (180, 180))
 IMG_METEOR = load_img("meteor.png", (200, 200))
 IMG_OUHE = load_img("ouhe.png", (80, 80))
+IMG_POISON = load_img("duhuoyan.png")
 
 
 def load_snd(filename):
@@ -93,14 +94,14 @@ SND_DODGE = [s for s in SND_DODGE if s]
 # 2. 视觉特效与衍生子弹类
 # ==========================================
 class SubtitleParticle:
-    """漫画风实体台词字幕"""
+    """漫画风实体台词字幕 - 增大字号并支持大招红字"""
 
     def __init__(self, text, x, y, is_ult=False):
         self.text = text
         self.x = x
         self.y = y
         self.angle = random.uniform(-50, 50)
-        self.max_life = 90  # 存在 1.5 秒
+        self.max_life = 90
         self.life = self.max_life
 
         font_size = 52 if is_ult else 38
@@ -178,7 +179,7 @@ class CometStrike:
         self.x = x
         self.y = y
         self.faction = faction
-        self.timer = 120  # 2秒警告
+        self.timer = 60
         self.active = True
         self.radius = -999
         self.damage = 0
@@ -192,9 +193,9 @@ class CometStrike:
             self.timer -= 1
             if self.timer <= 0:
                 self.phase = "IMPACT"
-                self.timer = 30
+                self.timer = 60
         elif self.phase == "IMPACT":
-            self.shockwave_radius += 30
+            self.shockwave_radius += 15
             self.timer -= 1
             if self.timer <= 0:
                 self.active = False
@@ -231,6 +232,12 @@ class PoisonFireball:
         self.hit_targets = set()
         self.wait_for_split = False
 
+        if IMG_POISON:
+            size = int(self.radius * 2.5)
+            self.image = pygame.transform.smoothscale(IMG_POISON, (size, size))
+        else:
+            self.image = None
+
     def move(self):
         if getattr(self, 'wait_for_split', False):
             return
@@ -251,12 +258,16 @@ class PoisonFireball:
             else:
                 self.active = False
 
-    # --- 核心修复：找回被误删的渲染逻辑！ ---
     def draw(self, surface):
         if getattr(self, 'wait_for_split', False):
             return
-        pygame.draw.circle(surface, (50, 200, 50), (int(self.x), int(self.y)), self.radius)
-        pygame.draw.circle(surface, (100, 255, 100), (int(self.x), int(self.y)), max(1, self.radius - 4))
+
+        if self.image:
+            rect = self.image.get_rect(center=(int(self.x), int(self.y)))
+            surface.blit(self.image, rect)
+        else:
+            pygame.draw.circle(surface, (50, 200, 50), (int(self.x), int(self.y)), self.radius)
+            pygame.draw.circle(surface, (100, 255, 100), (int(self.x), int(self.y)), max(1, self.radius - 4))
 
 
 # ==========================================
@@ -273,6 +284,9 @@ class LiuBa(Agent):
         self.max_hp = 1000
         self.hp = 1000
         self._hp = 1000
+
+        # --- 核心修改：大招充能效率变为 1/1.2，即所需总能量增加 20% ---
+        self.ult_charge_rate = 1.0 / 1.5
 
         # --- 被动：闪避 ---
         self.passive_dodge_cd = 10 * FPS
@@ -295,7 +309,7 @@ class LiuBa(Agent):
         self.temp_bullets = []
 
         # 各大招计时器
-        self.messi_timer = 0
+        self.messi_buffs = []
         self.shenlong_timer = 0
         self.yoyo_timer = 0
         self.yoyo_angle = 0
@@ -312,7 +326,6 @@ class LiuBa(Agent):
         self._is_ready = True
 
     def play_voice(self, snd_data, volume=1.0, is_ult=False):
-        """统一语音控制台：播放声音并在脚下生成台词实体"""
         if not snd_data: return
         snd, text = snd_data
 
@@ -333,7 +346,6 @@ class LiuBa(Agent):
             oy = random.randint(40, 70)
             self.subtitles.append(SubtitleParticle(text, self.x + ox, self.y + oy, is_ult=is_ult))
 
-    # ================= 拦截生命值，实现闪避与无敌 =================
     @property
     def hp(self):
         return self._hp
@@ -389,12 +401,12 @@ class LiuBa(Agent):
 
         self.dodge_blink_flag = True
 
-    # ================= 核心更新逻辑 =================
     def update_skill(self, bullet_list, agents=None):
         if agents is None: return
 
         if self.ult_charge < 100 and self.state == "NORMAL":
-            self.ult_charge = min(100, self.ult_charge + 0.15)
+            # --- 核心修改：被动充能也受到效率压缩 ---
+            self.ult_charge = min(100, self.ult_charge + 0.15 * self.ult_charge_rate)
 
         if not self.has_passive_dodge:
             self.dodge_timer -= 1
@@ -403,15 +415,38 @@ class LiuBa(Agent):
                 self.dodge_timer = self.passive_dodge_cd
 
         enemies = [a for a in agents if a.faction != self.faction and a.hp > 0]
+
+        # ================= 闪避逻辑处理 =================
         if getattr(self, 'dodge_blink_flag', False):
             self.dodge_blink_flag = False
             if enemies:
                 closest = min(enemies, key=lambda e: math.hypot(self.x - e.x, self.y - e.y))
                 angle = math.atan2(self.y - closest.y, self.x - closest.x)
-                self.x += math.cos(angle) * 150
-                self.y += math.sin(angle) * 150
-                self.x = max(self.radius, min(WIDTH - self.radius, self.x))
-                self.y = max(self.radius, min(HEIGHT - self.radius, self.y))
+
+                pre_dodge_speed = math.hypot(self.vx, self.vy)
+
+                new_x = self.x + math.cos(angle) * 450
+                new_y = self.y + math.sin(angle) * 450
+
+                hit_wall = False
+                if new_x < self.radius or new_x > WIDTH - self.radius or new_y < self.radius or new_y > HEIGHT - self.radius:
+                    hit_wall = True
+
+                self.x = max(self.radius, min(WIDTH - self.radius, new_x))
+                self.y = max(self.radius, min(HEIGHT - self.radius, new_y))
+
+                if hit_wall:
+                    rand_a = random.uniform(0, 2 * math.pi)
+                    self.vx = math.cos(rand_a) * max(pre_dodge_speed, self.base_speed)
+                    self.vy = math.sin(rand_a) * max(pre_dodge_speed, self.base_speed)
+
+        # ================= 大招连带事件处理 =================
+        if self.target_enemy and getattr(self.target_enemy, '_modao_wall_bounce', False):
+            if self.target_enemy.y >= HEIGHT - self.target_enemy.radius - 5:
+                self.target_enemy.vx = getattr(self.target_enemy, '_pre_modao_vx', 0)
+                self.target_enemy.vy = getattr(self.target_enemy, '_pre_modao_vy', 0)
+                self.target_enemy._modao_wall_bounce = False
+                self.target_enemy.is_knocked_back = False
 
         if self.temp_bullets:
             for b in self.temp_bullets: bullet_list.append(b)
@@ -451,7 +486,7 @@ class LiuBa(Agent):
                     b.active = False
             if math.hypot(self.x - self.target_enemy.x,
                           self.y - self.target_enemy.y) < self.radius + self.target_enemy.radius + 30:
-                self.target_enemy.hp = 0
+                self.target_enemy.hp -= 999999
                 self.state = "NORMAL"
             return
 
@@ -464,6 +499,9 @@ class LiuBa(Agent):
             self.vy = math.sin(angle) * self.base_speed * 4
             self.display_melee = 15
             if math.hypot(self.x - self.target_enemy.x, self.y - self.target_enemy.y) < 80 + self.target_enemy.radius:
+                self.target_enemy._pre_modao_vx = self.target_enemy.vx
+                self.target_enemy._pre_modao_vy = self.target_enemy.vy
+
                 self.target_enemy.hp -= 70
                 self.target_enemy.vx = 0
                 self.target_enemy.vy = -30
@@ -480,7 +518,11 @@ class LiuBa(Agent):
                 self.state = "MODAO_DOWN"
                 self.ult_timer = 20
                 self.vx, self.vy = 0, 30
-                if self.target_enemy: self.target_enemy.vy = 30
+                if self.target_enemy:
+                    self.target_enemy.hp -= 70
+                    self.target_enemy.vy = 120
+                    self.target_enemy.vx = 0
+                    self.target_enemy._modao_wall_bounce = True
             return
 
         elif self.state == "MODAO_DOWN":
@@ -488,16 +530,17 @@ class LiuBa(Agent):
             self.ult_timer -= 1
             if self.ult_timer <= 0:
                 self.state = "NORMAL"
-                if self.target_enemy and self.target_enemy.hp > 0:
-                    self.target_enemy.hp -= 70
-                    self.target_enemy.vx = 0
-                    self.target_enemy.vy = 0
             return
 
         # ================= 倒计时被动刷新 =================
         if self.display_ouhe > 0: self.display_ouhe -= 1
         if self.display_melee > 0: self.display_melee -= 1
-        if self.messi_timer > 0: self.messi_timer -= 1
+
+        new_buffs = []
+        for t in self.messi_buffs:
+            if t > 1: new_buffs.append(t - 1)
+        self.messi_buffs = new_buffs
+
         if self.shenlong_timer > 0: self.shenlong_timer -= 1
         if self.rock_timer > 0: self.rock_timer -= 1
 
@@ -515,7 +558,7 @@ class LiuBa(Agent):
 
         for b in bullet_list:
             if isinstance(b, CometStrike) and b.owner_faction == self.faction:
-                if b.phase == "IMPACT" and b.timer == 30:
+                if b.phase == "IMPACT" and b.timer == 60:
                     for e in enemies:
                         if math.hypot(b.x - e.x, b.y - e.y) < 150: e.hp -= 150
                 elif b.phase == "IMPACT":
@@ -538,8 +581,7 @@ class LiuBa(Agent):
             self.melee_cd = max(0, self.melee_cd - 1)
             self.ranged_cd = max(0, self.ranged_cd - 1)
 
-            current_base_speed = self.base_speed
-            if self.messi_timer > 0: current_base_speed *= 3
+            current_base_speed = self.base_speed * (3 ** len(self.messi_buffs))
             if self.rock_timer > 0: current_base_speed *= 0.5
 
             speed = math.hypot(self.vx, self.vy)
@@ -558,15 +600,15 @@ class LiuBa(Agent):
             if self.yoyo_timer > 0:
                 self.yoyo_timer -= 1
                 self.yoyo_angle += 0.15
-                y_x = self.x + math.cos(self.yoyo_angle) * 200
-                y_y = self.y + math.sin(self.yoyo_angle) * 200
+                y_x = self.x + math.cos(self.yoyo_angle) * 400
+                y_y = self.y + math.sin(self.yoyo_angle) * 400
                 for e in enemies:
                     if math.hypot(e.x - y_x, e.y - y_y) < e.radius + 30:
                         e.hp -= 5
                     else:
                         d1 = math.hypot(e.x - self.x, e.y - self.y)
                         d2 = math.hypot(e.x - y_x, e.y - y_y)
-                        if d1 + d2 < 200 + e.radius + 10:
+                        if d1 + d2 < 400 + e.radius + 10:
                             e.hp -= 2
                 return
 
@@ -574,8 +616,10 @@ class LiuBa(Agent):
                 self.display_melee = 15
                 self.base_swing_angle = math.atan2(closest.y - self.y, closest.x - self.x)
                 if SND_MELEE: self.play_voice(random.choice(SND_MELEE))
-                closest.hp -= self.atk * 2
-                self.ult_charge = min(100, self.ult_charge + 5)
+
+                closest.hp -= 40
+                # --- 核心修改：近战充能也受到效率压缩 ---
+                self.ult_charge = min(100, self.ult_charge + 5 * self.ult_charge_rate)
                 self.melee_cd = 60
 
             elif dist >= 200 and self.ranged_cd <= 0:
@@ -630,7 +674,7 @@ class LiuBa(Agent):
             if SND_EATING: SND_EATING.play()
 
         elif self.ult_choice == 4:
-            self.messi_timer = 5 * FPS
+            self.messi_buffs.append(5 * FPS)
 
         elif self.ult_choice == 5:
             if enemies:
@@ -694,7 +738,8 @@ class LiuBa(Agent):
         if self.display_melee > 0 and IMG_ATTACK:
             progress = (self.swing_max - max(0, self.display_melee)) / self.swing_max
             current_rad = self.base_swing_angle - math.radians(60) + (progress * math.radians(120))
-            rotated_sword = pygame.transform.rotate(IMG_ATTACK, -math.degrees(current_rad) - 90)
+
+            rotated_sword = pygame.transform.rotate(IMG_ATTACK, -math.degrees(current_rad) + 90)
 
             offset_x = self.x + math.cos(current_rad) * (self.radius + 110)
             offset_y = self.y + math.sin(current_rad) * (self.radius + 110)
@@ -702,8 +747,8 @@ class LiuBa(Agent):
             surface.blit(rotated_sword, rect)
 
         if self.yoyo_timer > 0:
-            y_x = self.x + math.cos(self.yoyo_angle) * 200
-            y_y = self.y + math.sin(self.yoyo_angle) * 200
+            y_x = self.x + math.cos(self.yoyo_angle) * 400
+            y_y = self.y + math.sin(self.yoyo_angle) * 400
             pygame.draw.line(surface, (200, 200, 200), (int(self.x), int(self.y)), (int(y_x), int(y_y)), 2)
             pygame.draw.circle(surface, (150, 50, 200), (int(y_x), int(y_y)), 20)
             pygame.draw.circle(surface, (255, 150, 255), (int(y_x), int(y_y)), 10)
@@ -726,35 +771,34 @@ class LiuBa(Agent):
 # 4. 图鉴数据注册
 # ==========================================
 liuba_stats = {
-    "近战伤害": "20x2 (动态巨化大太刀)",
-    "远程伤害": "15 (巨大忍者手预判)",
+    "近战伤害": "40",
+    "远程伤害": "15",
     "基础移速": "6.5",
-    "特异功能": "自动生成绝对闪避盾",
-    "大招充能": "极快 (极其频繁的忍术释放)"
+    "大招充能": "快"
 }
 
 liuba_mechanics = (
     "【被动·忍术替身】\n"
-    "每隔10秒自动获得一次闪避充能。遭受攻击时消耗充能，完全免疫本次伤害，并瞬间向远离敌人的方向闪现突进一段距离拉开身位。\n\n"
-    "【普攻·太刀弧斩/巨大忍者手】\n"
-    "远距离时每3秒抛射一次能精准预判敌人移速的巨大“忍者之手”，伤害虽低但大招充能极快。近身200码范围内使用200%尺寸的大太刀打出120度扇形大范围动态弧线斩击。\n\n"
+    "每隔10秒自动获得一次闪避充能。遭受攻击时消耗充能，完全免疫本次伤害，瞬间向远离敌人的方向长距离(450码)闪现拉开身位。若闪现途中撞墙，则会借力向随机方向反弹回闪现前的速度。\n\n"
+    "【普攻·太拉之刀/使用手】\n"
+    "远距离时，每3秒抛射“忍者之手”造成伤害。近身则使用“太拉之刀”打出扇形大范围动态弧线斩击。\n\n"
     "【终极技能·十重大忍术！】\n"
     "充能极快，会在10种截然不同的强力忍术中随机释放一种：\n"
-    "1. 啊彗星：天降陨石，并在落地后炸开一圈极其强力的清场击退冲击波。\n"
+    "1. 啊彗星：天降陨石光速下坠，并在落地后炸开一圈缓慢扩张的强力清场冲击波。\n"
     "2. 好男人也没的身手：叠加1次无敌闪避。\n"
     "3. 藕盒：吃下藕盒，瞬间回复200点生命值。\n"
-    "4. 我和梅西赛跑：移速暴增至300%，持续5秒。\n"
+    "4. 我和梅西赛跑：移速暴增至300%，持续5秒 (该效果可叠加)。\n"
     "5. 毒火焰：抛出毒火，触壁后会不断几何分裂的清场弹幕。\n"
-    "6. 令神龙造成烟雾：隐身1秒，期间进入绝对无敌状态（毒圈都毒不死）。\n"
-    "7. 磨刀我杀他去：高速突进将敌人挑飞再砸地，造成两次削弱后的平衡连击。\n"
-    "8. 纳米悠悠球：放弃普攻，掏出绞肉悠悠球进行360度大范围横扫。\n"
-    "9. 欧内死手，我夺取心脏：原地蓄力颤抖5秒，期间可以受到一切伤害。随后化作红光以800%速度冲刺并清除沿途弹幕，对撞到的敌人执行【即死秒杀】。\n"
-    "10. 岩石耐击术：移速减半，但获得高达80%的恐怖减伤，持续4秒。"
+    "6. 令神龙造成烟雾：隐身1秒，期间进入绝对无敌状态。\n"
+    "7. 磨刀我杀他去：高速突进将敌人挑飞，随后以肉眼难辨的速度将敌人砸向底线墙壁。若撞墙，敌方会瞬间恢复坠落前的速度脱身。\n"
+    "8. 纳米悠悠球：掏出极长(400码)的绞肉悠悠球进行长达3秒的360度大范围横扫。\n"
+    "9. 欧内死手，我夺取心脏：原地蓄力颤抖5秒后化作红光以800%速度冲刺，杀死碰到的一切敌人。\n"
+    "10. 岩石耐击术：移速减半，但获得高达80%的减伤，持续4秒。"
 )
 
 liuba_lore = (
     "“吓我一跳，我释放忍术！”\n\n"
-    "作为一名来自楚国的神秘武士，68自称“楚庄王”。他精通百家武学与忍术，口中总是吟唱着常人无法理解的咒语。在这个赌场里，没有他一个闪现切不到的手，如果有，那就再放个彗星。"
+    "作为一名来自楚国的神秘武士，68自称“楚庄王”。虽然，整个楚国的合法公民只有他一个人。"
 )
 
 register_almanac_entry(
